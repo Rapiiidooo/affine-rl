@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass
-from typing import Callable, Optional, Any, List, Dict
+from typing import Callable, Optional, Any
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -33,7 +33,13 @@ class ChutesClient:
     BASE_URL: str = os.getenv("CHUTES_BASE_URL", "https://llm.chutes.ai/v1")
     timeout_s: int = 60
 
-    def chat(self, messages: List[Dict[str, str]], temperature: float = 0.7, max_tokens: int = 256, stream: bool = False) -> str:
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 256,
+        stream: bool = False,
+    ) -> str:
         url = f"{self.BASE_URL}/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -79,12 +85,7 @@ class ChutesClient:
 # ----------------------------------------
 # Reward functions and utilities (pluggable)
 # ----------------------------------------
-def default_reward_fn(
-    history: List[Dict[str, str]],
-    assistant_utterance: str,
-    user_reply: str,
-    turn_idx: int,
-) -> float:
+def default_reward_fn(history: list[dict[str, str]], assistant_utterance: str, user_reply: str, turn_idx: int) -> float:
     """Simple baseline reward encouraging concision + engagement."""
     if not assistant_utterance.strip():
         return -0.5
@@ -102,7 +103,7 @@ class ChutesEnvConfig:
     max_tokens: int = 256
     max_char_obs: int = 4096
     max_char_act: int = 1024
-    reward_fn: Callable[[List[Dict[str, str]], str, str, int], float] = default_reward_fn
+    reward_fn: Callable[[list[dict[str, str]], str, str, int], float] = default_reward_fn
 
 
 class ChutesConversationEnv(gym.Env):
@@ -117,37 +118,44 @@ class ChutesConversationEnv(gym.Env):
         self.observation_space = spaces.Text(max_length=self.cfg.max_char_obs)
         self.action_space = spaces.Text(max_length=self.cfg.max_char_act)
         self._turn = 0
-        self._messages: List[Dict[str, str]] = []
+        self._messages: list[dict[str, str]] = []
         self._last_user_reply: str = ""
 
     # -------------- Gym API --------------
-    def reset(self, *, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> tuple[str, Dict[str, Any]]:
+    def reset(self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None) -> tuple[str, dict[str, Any]]:
         super().reset(seed=seed)
         self._turn = 0
         self._messages = [
             {"role": "system", "content": self.cfg.system_prompt},
-            {"role": "user", "content": options.get("user_seed", "Hello !") if options else "Hello !"},
+            {
+                "role": "user",
+                "content": (options.get("user_seed", "Hello !") if options else "Hello !"),
+            },
         ]
         obs = self._serialize_messages()
         return obs, {"messages": list(self._messages)}
 
-    def step(self, action: str) -> tuple[str, float, bool, bool, Dict[str, Any]]:
+    def step(self, action: str) -> tuple[str, float, bool, dict[str, Any]]:
         assistant_utterance = (action or "").strip()[: self.cfg.max_char_act]
         self._messages.append({"role": "assistant", "content": assistant_utterance})
-        user_reply = self.client.chat(self._messages, temperature=self.cfg.temperature, max_tokens=self.cfg.max_tokens, stream=True)
+        user_reply = self.client.chat(
+            self._messages,
+            temperature=self.cfg.temperature,
+            max_tokens=self.cfg.max_tokens,
+            stream=True,
+        )
         self._last_user_reply = user_reply
         self._messages.append({"role": "user", "content": user_reply})
         reward = self.cfg.reward_fn(self._messages, assistant_utterance, user_reply, self._turn)
         self._turn += 1
         terminated = self._turn >= self.cfg.max_turns
-        truncated = False
         obs = self._serialize_messages()
         info = {
             "messages": list(self._messages),
             "turn": self._turn,
             "user_reply": user_reply,
         }
-        return obs, float(reward), bool(terminated), bool(truncated), info
+        return obs, float(reward), bool(terminated), info
 
     def render(self):
         print(self._pretty_transcript())
@@ -174,7 +182,13 @@ class ChutesConversationEnv(gym.Env):
 # Optional: Wrapper to convert Text action/obs to token IDs
 # ------------------------------------------------------
 class TextToIDsWrapper(gym.Wrapper):
-    def __init__(self, env: ChutesConversationEnv, tokenizer, max_obs_tokens: int = 512, max_act_tokens: int = 128):
+    def __init__(
+        self,
+        env: ChutesConversationEnv,
+        tokenizer,
+        max_obs_tokens: int = 512,
+        max_act_tokens: int = 128,
+    ):
         super().__init__(env)
         self.tokenizer = tokenizer
         self.max_obs_tokens = max_obs_tokens
@@ -188,8 +202,8 @@ class TextToIDsWrapper(gym.Wrapper):
 
     def step(self, action_ids):
         action_text = self._decode_act(action_ids)
-        text_obs, reward, terminated, truncated, info = self.env.step(action_text)
-        return self._encode_obs(text_obs), reward, terminated, truncated, info
+        text_obs, reward, terminated, info = self.env.step(action_text)
+        return self._encode_obs(text_obs), reward, terminated, info
 
     def _encode_obs(self, text: str):
         ids = self.tokenizer.encode(text, add_special_tokens=False)[: self.max_obs_tokens]
@@ -211,7 +225,7 @@ class ChutesActorPolicy:
 
     def __call__(self, observation_text: str) -> str:
         lines = [ln for ln in observation_text.split("\n") if ln.strip()]
-        messages: List[Dict[str, str]] = [{"role": "system", "content": self.system_prompt}]
+        messages: list[dict[str, str]] = [{"role": "system", "content": self.system_prompt}]
         for ln in lines:
             if ":" in ln:
                 head, content = ln.split(":", 1)
@@ -238,7 +252,12 @@ class ChutesActorPolicy:
                 print(f"{BLUE}AGENT>{RESET} {m['content']}")
         print("\n[AGENT streaming output]")
 
-        return self.client.chat(messages, temperature=self.temperature, max_tokens=self.max_tokens, stream=True)
+        return self.client.chat(
+            messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            stream=True,
+        )
 
 
 # -----------------------
@@ -262,9 +281,9 @@ if __name__ == "__main__":
     step_i = 0
     while not done:
         action = policy(obs)
-        obs, reward, terminated, truncated, info = env.step(action)
+        obs, reward, terminated, info = env.step(action)
         print(f"\n[step {step_i}] reward={reward:.3f}\n")
-        done = terminated or truncated
+        done = terminated
         step_i += 1
 
     print("\nFinished.")
